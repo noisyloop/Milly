@@ -42,6 +42,11 @@ class Memory:
     def _load_or_create_key(self) -> bytes:
         path = self._key_path()
         if path.exists():
+            # Enforce restricted permissions on existing key file
+            try:
+                path.chmod(0o600)
+            except OSError:
+                pass  # best-effort on restricted filesystems
             with open(path, "rb") as f:
                 return f.read()
         key = secrets.token_bytes(32)
@@ -68,6 +73,8 @@ class Memory:
     def _session_path(self, session_id: str) -> Path:
         # Sanitize session ID to safe filename characters
         safe = "".join(c for c in session_id if c.isalnum() or c in "-_")[:64]
+        if not safe:
+            raise ValueError(f"Invalid session ID: '{session_id}' produces empty filename")
         return self.dir / f"{safe}.json"
 
     # ------------------------------------------------------------------
@@ -76,12 +83,13 @@ class Memory:
 
     def load(self, session_id: str) -> list[dict]:
         """
-        Load and verify a session. Raises MemoryIntegrityError on tamper/corruption.
-        Returns empty list if session does not exist.
+        Load and verify a session.
+        Raises FileNotFoundError if session does not exist.
+        Raises MemoryIntegrityError on tamper/corruption.
         """
         path = self._session_path(session_id)
         if not path.exists():
-            return []
+            raise FileNotFoundError(f"Session '{session_id}' not found.")
 
         with open(path, "r", encoding="utf-8") as f:
             stored = json.load(f)

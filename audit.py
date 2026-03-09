@@ -6,6 +6,7 @@ Content is never logged; only input hashes and metadata.
 """
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,10 @@ class AuditLog:
             entry["model"] = model
         entry.update(kwargs)
 
-        with open(self.log_path, "a", encoding="utf-8") as f:
+        # Use os.open with restricted permissions (0o600) for security log
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        fd = os.open(str(self.log_path), flags, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
     def _refresh_cache(self) -> None:

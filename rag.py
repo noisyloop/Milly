@@ -76,7 +76,8 @@ class RAG:
                 self._index = []
 
     def _save_index(self) -> None:
-        with open(self.index_path, "w", encoding="utf-8") as f:
+        fd = os.open(str(self.index_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(self._index, f, ensure_ascii=False, indent=2)
 
     # ------------------------------------------------------------------
