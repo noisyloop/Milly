@@ -323,9 +323,9 @@ def run() -> None:
     engine.new_session()
     print_banner(engine)
 
-    # Auto-ingest docs on startup if any exist
+    # Auto-ingest docs on startup if any real files exist (skip dotfiles like .gitkeep)
     docs_dir = Path("docs")
-    if any(docs_dir.rglob("*")):
+    if any(p for p in docs_dir.rglob("*") if p.is_file() and not p.name.startswith(".")):
         console.print("[dim]Auto-indexing docs/...[/dim]", end=" ")
         results = engine.rag.ingest()
         n = len(results.get("indexed", []))
