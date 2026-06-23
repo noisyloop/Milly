@@ -23,7 +23,7 @@ Milly is a security-hardened local LLM chatbot built on Ollama with an architect
 - **TF-IDF RAG engine** — local retrieval-augmented generation with no external API calls, ever
 - **Air-gapped by design** — no telemetry, no cloud fallback, no call-home behavior
 - **Full audit trail** — every inference, every memory read/write, logged and attributable
-- **136 passing tests** — security properties are verified, not assumed
+- **157 passing tests** — security properties are verified, not assumed
 
 ---
 
@@ -82,11 +82,9 @@ git clone https://github.com/m0rs3c0d3/milly
 cd milly
 pip install -r requirements.txt
 
-# Generate your HMAC key (stays local, stays yours)
-python scripts/keygen.py
-
-# Run
-python milly.py
+# Run — your HMAC key is generated automatically on first launch
+# (stays local in memory/.key, mode 0600, stays yours)
+python main.py
 ```
 
 ---
@@ -94,8 +92,9 @@ python milly.py
 ## Test Suite
 
 ```bash
-pytest tests/ -v
-# 136 tests — covering memory integrity, RAG retrieval, audit logging, injection resistance
+pytest -v
+# Covering the Guardian security layer (injection detection, sanitization,
+# output filtering) plus memory integrity (HMAC signing, tamper rejection).
 ```
 
 Security properties are tested, not documented. If it's not in the test suite, it's not a feature.
