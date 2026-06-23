@@ -94,6 +94,12 @@ class Memory:
         with open(path, "r", encoding="utf-8") as f:
             stored = json.load(f)
 
+        if not isinstance(stored, dict):
+            raise MemoryIntegrityError(
+                f"Session '{session_id}' is not a valid session file "
+                "(unexpected format). Use '/session new' to start fresh."
+            )
+
         data: str = stored.get("data", "")
         sig: str = stored.get("sig", "")
 
@@ -142,7 +148,23 @@ class Memory:
         return []
 
     def list_sessions(self) -> list[str]:
-        return sorted(p.stem for p in self.dir.glob("*.json"))
+        """Return saved session IDs.
+
+        The memory/ directory also holds non-session JSON (e.g. the RAG
+        index), so a bare glob would surface bogus "sessions". Only files
+        carrying the signed-envelope shape (``data`` + ``sig`` keys) are
+        treated as sessions.
+        """
+        sessions: list[str] = []
+        for p in self.dir.glob("*.json"):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    stored = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(stored, dict) and "data" in stored and "sig" in stored:
+                sessions.append(p.stem)
+        return sorted(sessions)
 
     def delete_session(self, session_id: str) -> None:
         path = self._session_path(session_id)
