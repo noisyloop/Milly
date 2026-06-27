@@ -1,7 +1,7 @@
 # Milly
 
 > **The first local LLM with a built-in security layer.**  
-> Air-gapped. Auditable. Yours.
+> Works offline. Auditable. Yours.
 
 ---
 
@@ -21,7 +21,9 @@ Milly is a security-hardened local LLM chatbot built on Ollama with an architect
 
 - **HMAC-signed conversation memory** — every memory entry is cryptographically signed; tampering is detectable
 - **TF-IDF RAG engine** — local retrieval-augmented generation with no external API calls, ever
-- **Air-gapped by design** — no telemetry, no cloud fallback, no call-home behavior; verified working fully offline
+- **Offline by design** — Milly makes zero external network calls. 
+No telemetry, no cloud fallback, no call-home behavior. 
+For full air-gap, disable Ollama analytics with `OLLAMA_NO_ANALYTICS=1`.
 - **Full audit trail** — every inference, every memory read/write, logged and attributable
 - **157 passing tests** — security properties are verified, not assumed
 
