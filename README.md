@@ -78,7 +78,7 @@ Milly is a security-hardened local LLM chatbot built on Ollama with an architect
 
 ```bash
 # Requirements: Python 3.10+, Ollama running locally
-git clone https://github.com/m0rs3c0d3/milly
+git clone https://github.com/noisyloop/milly
 cd milly
 pip install -r requirements.txt
 
