@@ -1,22 +1,42 @@
-model: "llama3.2"
-temperature: 0.7
-ollama_host: "http://localhost:11434"
-# System prompt is loaded from system_prompt.txt (project root).
-# Edit that file to customise Milly's behaviour and persona.
-# This key is a fallback only — used if system_prompt.txt is absent.
+# ============================================================================
+# Milly configuration
+#
+# Every option below has a built-in default — if this file is missing or a key
+# is omitted, Milly falls back to the defaults shown here. Edit and restart.
+# ============================================================================
 
-guardian:
-  max_input_length: 4000
-  injection_detection: true
-  output_sanitization: true
-  log_detections: true
+# --- Core ---
+default_model: llama3.2                # Ollama model used for inference (see `ollama list`)
+temperature: 0.7                       # Sampling temperature; 0.0 = deterministic, 1.0 = creative
+ollama_host: http://localhost:11434    # Ollama API endpoint (local by default — no egress)
 
+# --- Guardian (security layer) ---
+guardian_enabled: true                 # Master switch for input/output security checks
+guardian_sensitivity: medium           # Detection aggressiveness: low | medium | high
+                                       #   low    — only the most obvious attacks (instruction
+                                       #            substitution, authority impersonation)
+                                       #   medium — default; balanced OWASP LLM pattern set
+                                       #   high   — flags merely suspicious phrasing too
+                                       #            (hypothetical framing, encoded payloads)
+max_input_length: 4000                 # Reject inputs longer than this many characters
+
+# --- Audit ---
+audit_logging: true                    # Write security events to logs/security.log
+
+# --- System prompt ---
+# Milly's persona/instructions load from system_prompt.txt (project root).
+# Edit that file to customise behaviour. The key below is a fallback only,
+# used when system_prompt.txt is absent.
+# system_prompt: "You are Milly, a helpful local AI assistant."
+
+# --- Memory (advanced) ---
 memory:
   enabled: true
-  max_history: 50
+  max_history: 50                      # Max user+assistant turn pairs kept per session
 
+# --- RAG (advanced) ---
 rag:
   enabled: true
-  max_file_size_mb: 10
-  scan_for_injection: true
-  top_k: 3
+  max_file_size_mb: 10                 # Skip docs larger than this during /ingest
+  scan_for_injection: true             # Run Guardian over ingested documents
+  top_k: 3                             # Number of doc chunks retrieved per query

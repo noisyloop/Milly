@@ -8,6 +8,8 @@ Commands:
   /ingest            Re-index docs/ folder
   /status            Model, memory, RAG, Guardian stats
   /audit             Print security event summary for this session
+  /audit export      Export this session's audit log to exports/
+  /guardian          Show Guardian sensitivity and detection stats
   /session new       Start a new named session
   /session list      List saved sessions
   /session load NAME Load a previous session
@@ -52,6 +54,8 @@ HELP_TEXT = """[bold]Milly commands[/bold]
   [cyan]/ingest[/cyan]             Re-index docs/ folder
   [cyan]/status[/cyan]             Show model, memory, RAG, Guardian stats
   [cyan]/audit[/cyan]              Security event summary for this session
+  [cyan]/audit export[/cyan]       Export this session's audit log to exports/
+  [cyan]/guardian[/cyan]           Show Guardian sensitivity level and stats
   [cyan]/session new[/cyan]        Start a new (auto-named) session
   [cyan]/session new NAME[/cyan]   Start a new session with a specific name
   [cyan]/session list[/cyan]       List saved sessions
@@ -93,17 +97,51 @@ def _load_system_prompt(cfg: dict) -> str:
     return str(cfg.get("system_prompt", _DEFAULT_SYSTEM_PROMPT)).strip()
 
 
+# Built-in defaults — used when config.yaml is missing or a key is omitted.
+DEFAULT_CONFIG: dict = {
+    "default_model": "llama3.2",
+    "temperature": 0.7,
+    "max_input_length": 4000,
+    "guardian_enabled": True,
+    "guardian_sensitivity": "medium",
+    "audit_logging": True,
+    "ollama_host": "http://localhost:11434",
+}
+
+
 def load_config(path: str = "config.yaml") -> dict:
+    """Load config.yaml, layered over built-in defaults.
+
+    Any key absent from the file falls back to DEFAULT_CONFIG, so Milly always
+    starts with a complete, sensible configuration even if the file is missing.
+    """
+    cfg = dict(DEFAULT_CONFIG)
     cfg_path = Path(path)
     if not cfg_path.exists():
-        console.print(f"[yellow]config.yaml not found — using defaults.[/yellow]")
-        return {}
+        console.print("[yellow]config.yaml not found — using defaults.[/yellow]")
+        return cfg
     with open(cfg_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        loaded = yaml.safe_load(f) or {}
+    cfg.update(loaded)
+    return cfg
 
 
 def build_engine(cfg: dict) -> ChatEngine:
-    guardian_cfg = cfg.get("guardian", {})
+    audit_logging = bool(cfg.get("audit_logging", True))
+
+    # Translate the flat, user-facing config keys into the per-component config
+    # shapes Guardian and ChatEngine expect. The `guardian_enabled` master
+    # switch gates both detection layers.
+    guardian_enabled = bool(cfg.get("guardian_enabled", True))
+    guardian_cfg = {
+        "enabled": guardian_enabled,
+        "sensitivity": cfg.get("guardian_sensitivity", "medium"),
+        "max_input_length": cfg.get("max_input_length", 4000),
+        "injection_detection": guardian_enabled,
+        "output_sanitization": guardian_enabled,
+        "log_detections": audit_logging,
+        "custom_patterns_file": cfg.get("custom_patterns_file", "custom_patterns.txt"),
+    }
     memory_cfg = cfg.get("memory", {})
     rag_cfg = cfg.get("rag", {})
 
@@ -122,6 +160,8 @@ def build_engine(cfg: dict) -> ChatEngine:
 
     # Merge top-level config so ChatEngine sees model, temperature, etc.
     engine_cfg = dict(cfg)
+    engine_cfg["model"] = cfg.get("default_model", "llama3.2")
+    engine_cfg["guardian"] = guardian_cfg  # so chat.py can read log_detections
     engine_cfg["system_prompt"] = _load_system_prompt(cfg)
     engine_cfg["rag"] = rag_cfg  # pass rag sub-config for enabled flag
 
@@ -163,7 +203,15 @@ def cmd_status(engine: ChatEngine) -> None:
     console.print(Panel(table, title="[bold]Status[/bold]", border_style="green"))
 
 
-def cmd_audit(engine: ChatEngine) -> None:
+def cmd_audit(engine: ChatEngine, args: list[str]) -> None:
+    if args and args[0].lower() == "export":
+        path = engine.audit.export_session(engine.session_id, export_dir="exports")
+        console.print(
+            f"[green]Audit log exported:[/green] [bold]{path}[/bold]\n"
+            f"[dim]Contains event metadata and input hashes only — no raw input.[/dim]"
+        )
+        return
+
     summary = engine.audit.get_session_summary(engine.session_id)
     table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
     table.add_column("Event", style="cyan")
@@ -178,6 +226,25 @@ def cmd_audit(engine: ChatEngine) -> None:
             border_style="yellow",
         )
     )
+
+
+def cmd_guardian(engine: ChatEngine) -> None:
+    g = engine.guardian
+    stats = g.stats()
+    table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
+    table.add_column("Key", style="cyan")
+    table.add_column("Value")
+    table.add_row("Enabled", str(g.enabled))
+    table.add_row("Sensitivity", g.sensitivity)
+    table.add_row("Injection detection", str(g.injection_detection))
+    table.add_row("Output sanitization", str(g.output_sanitization))
+    table.add_row("Max input length", str(g.max_length))
+    table.add_row("Active patterns", str(g.active_pattern_count))
+    table.add_row("Custom patterns", str(g.custom_pattern_count))
+    table.add_row("Clean", str(stats.get("clean", 0)))
+    table.add_row("Flagged", str(stats.get("flagged", 0)))
+    table.add_row("Blocked", str(stats.get("blocked", 0)))
+    console.print(Panel(table, title="[bold]Guardian[/bold]", border_style="magenta"))
 
 
 def cmd_ingest(engine: ChatEngine) -> None:
@@ -280,7 +347,9 @@ def handle_command(line: str, engine: ChatEngine) -> bool:
     elif cmd == "status":
         cmd_status(engine)
     elif cmd == "audit":
-        cmd_audit(engine)
+        cmd_audit(engine, args)
+    elif cmd == "guardian":
+        cmd_guardian(engine)
     elif cmd == "ingest":
         cmd_ingest(engine)
     elif cmd == "clear":

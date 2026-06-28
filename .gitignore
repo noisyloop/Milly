@@ -18,6 +18,7 @@ env/
 logs/security.log
 memory/*.json
 memory/.key
+exports/
 
 # OS
 .DS_Store

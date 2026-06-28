@@ -74,6 +74,11 @@ class ChatEngine:
     def new_session(self, name: Optional[str] = None) -> str:
         self.session_id = name or self._new_session_id()
         self.history = []
+        # Persist the (empty) session immediately so it can be loaded right
+        # away with `/session load NAME`. Previously a session was only written
+        # to disk after the first successful chat turn, so `/session new test1`
+        # followed by `/session load test1` reported "not found".
+        self.memory.save(self.session_id, self.history)
         self.audit.log(self.session_id, "session_start", model=self.model)
         return self.session_id
 
