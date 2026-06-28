@@ -193,7 +193,13 @@ A new key is generated automatically on next launch.
 rm -rf memory/
 ```
 
-Nothing is sent anywhere. Everything Milly stores is in `memory/` and `docs/` on your machine. Delete them and it's gone.
+**Clear security logs:**
+
+```bash
+rm logs/security.log
+```
+
+Nothing is sent anywhere. Everything Milly stores is in `memory/`, `logs/`, and `docs/` on your machine. Delete them and it's gone.
 
 ---
 
