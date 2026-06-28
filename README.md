@@ -14,7 +14,7 @@ Milly is a security-hardened local LLM chatbot built on Ollama. The security lay
 - **Guardian layer** — prompt injection detection, input sanitization, output filtering
 - **Full audit trail** — every inference, every memory read/write, logged and attributable
 - **Offline by design** — no telemetry, no cloud fallback, no call-home behavior. For full air-gap, disable Ollama analytics with `OLLAMA_NO_ANALYTICS=1`
-- **157 passing tests** — security properties are verified, not assumed
+- **186 passing tests** — security properties are verified, not assumed
 
 ---
 
@@ -106,6 +106,51 @@ Security properties are tested, not documented. If it's not in the test suite, i
 
 ---
 
+## Configuration
+
+Milly reads `config.yaml` from the project root on startup. Every option has a
+built-in default, so Milly runs even if the file is missing or incomplete.
+
+```yaml
+default_model: llama3.2                # Ollama model used for inference
+temperature: 0.7                       # 0.0 = deterministic, 1.0 = creative
+ollama_host: http://localhost:11434    # Ollama API endpoint
+guardian_enabled: true                 # Master switch for security checks
+guardian_sensitivity: medium           # low | medium | high
+max_input_length: 4000                 # Reject inputs longer than this
+audit_logging: true                    # Write events to logs/security.log
+```
+
+### Guardian sensitivity
+
+The Guardian detection layer has three tiers, set via `guardian_sensitivity`:
+
+| Level | Behavior |
+|-------|----------|
+| `low` | Flags only the most obvious attacks — direct instruction substitution and authority impersonation |
+| `medium` | Default. Balanced OWASP LLM Top 10 pattern set |
+| `high` | Flags merely suspicious phrasing too — hypothetical framing, encoded/obfuscated payloads |
+
+Run `/guardian` inside Milly to see the active level, pattern counts, and
+detection stats for the session.
+
+### Custom detection patterns
+
+Add your own injection-detection patterns without touching `guardian.py`:
+edit `custom_patterns.txt` in the project root, one regex per line. Custom
+patterns are always active regardless of the sensitivity tier. Lines starting
+with `#` are comments; an optional TAB-separated name labels the pattern in
+logs. See the file header for the full format.
+
+### Audit export
+
+Run `/audit export` to write the current session's audit log to a timestamped
+file under `exports/` (e.g. `exports/audit_2026-06-27_session-abc123.json`).
+Exports contain event metadata, timestamps, pattern types, and input *hashes*
+only — never raw user input, matching the live audit log's privacy guarantee.
+
+---
+
 ## Knowledge Base
 
 Drop `.md` or `.txt` files into the `docs/` folder, then run `/ingest` inside Milly. It indexes them locally using TF-IDF and retrieves relevant context on each query. No embeddings API, no internet, no cloud.
@@ -132,6 +177,8 @@ Add your own docs to extend the knowledge base. The `docs/` folder is in `.gitig
 | `/help` | Show commands |
 | `/status` | Model, memory, RAG, and Guardian stats |
 | `/audit` | Security event summary for this session |
+| `/audit export` | Export this session's audit log to `exports/` |
+| `/guardian` | Show Guardian sensitivity level and detection stats |
 | `/ingest` | Re-index the `docs/` folder |
 | `/clear` | Clear session history |
 | `/session new NAME` | Start a new named session |

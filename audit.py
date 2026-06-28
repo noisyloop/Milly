@@ -82,3 +82,32 @@ class AuditLog:
             etype = e.get("event", "unknown")
             counts[etype] = counts.get(etype, 0) + 1
         return {"session_id": session_id, "total": len(events), "by_type": counts}
+
+    def export_session(self, session_id: str, export_dir: str = "exports") -> Path:
+        """Write a session's audit events to a timestamped JSON file.
+
+        The file is named ``audit_<YYYY-MM-DD>_session-<id>.json`` inside
+        ``export_dir`` (created if absent) and written with mode 0o600.
+
+        Events already contain only input *hashes*, never raw user input —
+        so the export inherits the same privacy guarantee as the live log.
+        Returns the path to the written file.
+        """
+        events = self.get_session_events(session_id)
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        out_dir = Path(export_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"audit_{date_str}_session-{session_id}.json"
+
+        payload = {
+            "session_id": session_id,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "event_count": len(events),
+            "events": events,
+        }
+
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        return path
