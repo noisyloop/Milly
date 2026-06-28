@@ -1,30 +1,19 @@
 # Milly
 
-> **The first local LLM with a built-in security layer.**  
-> Works offline. Auditable. Yours.
-
----
-
-## The Problem With Every Other Local LLM
-
-You ran Ollama. You ran LM Studio. You pointed a chat UI at your local model and felt good about "privacy."
-
-But nothing was watching the memory layer. Nothing was signing the conversation history. Nothing was auditing what the model was being told — or what it was learning about you. You had local compute. You didn't have local security.
-
-Milly fixes that.
+> **Local LLM with a built-in security layer.**  
+> Auditable. Offline. Yours.
 
 ---
 
 ## What It Does
 
-Milly is a security-hardened local LLM chatbot built on Ollama with an architecture designed from first principles around integrity, auditability, and isolation. It's not a wrapper. The security layer is structural.
+Milly is a security-hardened local LLM chatbot built on Ollama. The security layer is structural, not bolted on.
 
 - **HMAC-signed conversation memory** — every memory entry is cryptographically signed; tampering is detectable
-- **TF-IDF RAG engine** — local retrieval-augmented generation with no external API calls, ever
-- **Offline by design** — Milly makes zero external network calls. 
-No telemetry, no cloud fallback, no call-home behavior. 
-For full air-gap, disable Ollama analytics with `OLLAMA_NO_ANALYTICS=1`.
+- **TF-IDF RAG engine** — local retrieval-augmented generation with no external API calls
+- **Guardian layer** — prompt injection detection, input sanitization, output filtering
 - **Full audit trail** — every inference, every memory read/write, logged and attributable
+- **Offline by design** — no telemetry, no cloud fallback, no call-home behavior. For full air-gap, disable Ollama analytics with `OLLAMA_NO_ANALYTICS=1`
 - **157 passing tests** — security properties are verified, not assumed
 
 ---
@@ -80,7 +69,7 @@ For full air-gap, disable Ollama analytics with `OLLAMA_NO_ANALYTICS=1`.
 
 **1. Install Ollama**
 
-- **Mac:** Download the app from [ollama.com/download](https://ollama.com/download) — installs to your menu bar, no manual `ollama serve` needed
+- **Mac:** Download the app from [ollama.com/download](https://ollama.com/download)
 - **Linux:** `curl -fsSL https://ollama.com/install.sh | sh`
 
 **2. Pull a model**
@@ -98,6 +87,8 @@ cd Milly
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+export OLLAMA_NO_ANALYTICS=1
 python main.py
 ```
 
@@ -109,23 +100,28 @@ Your HMAC key is generated automatically on first launch and stays local in `mem
 
 ```bash
 pytest -v
-# Covering the Guardian security layer (injection detection, sanitization,
-# output filtering) plus memory integrity (HMAC signing, tamper rejection).
 ```
 
 Security properties are tested, not documented. If it's not in the test suite, it's not a feature.
 
 ---
 
-## RAG — Drop In Your Own Docs
+## Knowledge Base
 
-Put any `.txt` or `.md` files in the `docs/` folder, then run `/ingest` inside Milly. It indexes them locally using TF-IDF and retrieves relevant context on each query — no embeddings API, no internet, no cloud.
+Drop `.md` or `.txt` files into the `docs/` folder, then run `/ingest` inside Milly. It indexes them locally using TF-IDF and retrieves relevant context on each query. No embeddings API, no internet, no cloud.
 
-```
-/ingest
-```
+Included reference docs:
 
-Ask Milly about anything in your docs. It cites from your local knowledge base, not the internet.
+| File | Contents |
+|------|----------|
+| `guardian.md` | Attack pattern reference for the Guardian layer |
+| `threats.md` | Threat models for local LLMs with risk matrix |
+| `owasp-llm.md` | OWASP LLM Top 10 mapped to Milly's mitigations |
+| `researcher.md` | Operator context for security research use |
+| `opsec.md` | Operational security principles |
+| `security.md` | Security concepts reference |
+
+Add your own docs to extend the knowledge base. The `docs/` folder is in `.gitignore` — your personal knowledge stays local.
 
 ---
 
@@ -141,7 +137,7 @@ Ask Milly about anything in your docs. It cites from your local knowledge base, 
 | `/session new NAME` | Start a new named session |
 | `/session list` | List saved sessions |
 | `/session load NAME` | Load a previous session |
-| `/model NAME` | Switch model (e.g. `/model gemma3:1b`) |
+| `/model NAME` | Switch model at runtime |
 | `/exit` | Quit |
 
 ---
@@ -151,24 +147,53 @@ Ask Milly about anything in your docs. It cites from your local knowledge base, 
 | Model | Size | Notes |
 |-------|------|-------|
 | llama3.2 | ~2GB | Default |
-| gemma3:1b | ~800MB | Lightweight, works well |
+| gemma3:1b | ~800MB | Lightweight, fast |
+| dolphin3 | ~2GB | Less filtered |
+| mistral | ~4GB | Strong general purpose |
 
-Any model available via `ollama pull` should work. Switch with `/model NAME` at runtime.
+Any local model available via `ollama pull` should work. Cloud models (`:cloud` tag) are not supported — they break the offline guarantee.
 
 ---
 
 ## Offline Use
 
-Once Ollama and your model are pulled, Milly runs fully offline. No internet connection required. This is the air-gapped claim in practice — verified.
+Once Ollama and your model are downloaded, Milly runs fully offline. No internet connection required. Verified working with wifi disabled.
 
 ---
 
-## Use Cases
+## Privacy Controls
 
-- **Security researchers** who need an LLM that won't leak context
-- **Red teamers** building AI-assisted tooling for air-gapped environments
-- **Engineers** in regulated industries where cloud LLM use is prohibited
-- **Anyone** who actually read the terms of service for the big providers
+**Disable Ollama analytics:**
+
+```bash
+export OLLAMA_NO_ANALYTICS=1
+```
+
+Add to your shell profile (`~/.zshrc` or `~/.bashrc`) to make it permanent.
+
+**Disable Milly's audit logging:**
+
+Audit logs are stored locally in the `memory/` directory. To clear them:
+
+```bash
+rm memory/*.json
+```
+
+To clear your HMAC key and start fresh:
+
+```bash
+rm memory/.key
+```
+
+A new key is generated automatically on next launch.
+
+**Clear all local data:**
+
+```bash
+rm -rf memory/
+```
+
+Nothing is sent anywhere. Everything Milly stores is in `memory/` and `docs/` on your machine. Delete them and it's gone.
 
 ---
 
