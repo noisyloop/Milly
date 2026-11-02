@@ -31,6 +31,7 @@ from pathlib import Path
 
 import yaml
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich import box
@@ -318,7 +319,7 @@ def cmd_session(engine: ChatEngine, args: list[str]) -> None:
         else:
             for s in sessions:
                 marker = " [bold green](current)[/bold green]" if s == engine.session_id else ""
-                console.print(f"  {s}{marker}")
+                console.print(f"  {escape(s)}{marker}", highlight=False)
 
     elif sub in ("delete", "rm"):
         if len(args) < 2:
@@ -388,7 +389,7 @@ def cmd_models(engine: ChatEngine) -> None:
     console.print(f"[bold]Models on {engine.provider_name}:[/bold]")
     for m in models:
         marker = " [bold green](current)[/bold green]" if m == engine.model else ""
-        console.print(f"  {m}{marker}")
+        console.print(f"  {escape(m)}{marker}", highlight=False)
 
 
 def cmd_provider(engine: ChatEngine, args: list[str]) -> None:
