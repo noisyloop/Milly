@@ -26,6 +26,7 @@ Usage:
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -491,6 +492,65 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+class StreamWrapper:
+    """Word-wrap streamed text to the terminal width as it arrives.
+
+    Tokens are written as soon as a word is complete, so replies still
+    stream smoothly but never break in the middle of a word. Newlines and
+    indentation from the model are kept.
+    """
+
+    def __init__(self, width: int, col: int = 0, out=None):
+        self.width = max(20, width)
+        self.col = col
+        self.out = out or sys.stdout
+        self._word = ""
+        self._spaces = ""  # held until the next word decides whether to wrap
+
+    def write(self, text: str) -> None:
+        for ch in text:
+            if ch == "\n":
+                self._flush_word()
+                self._spaces = ""
+                self._emit("\n")
+                self.col = 0
+            elif ch in " \t":
+                self._flush_word()
+                self._spaces += ch
+            else:
+                self._word += ch
+                if len(self._word) >= self.width:  # absurdly long word: hard break
+                    self._flush_word()
+        self.out.flush()
+
+    def newline(self) -> None:
+        self._flush_word()
+        self._spaces = ""
+        self._emit("\n")
+        self.col = 0
+
+    def finish(self) -> None:
+        self._flush_word()
+        self.out.flush()
+
+    def _flush_word(self) -> None:
+        if not self._word:
+            return
+        if self.col and self.col + len(self._spaces) + len(self._word) > self.width:
+            self._emit("\n")
+            self.col = 0
+        else:
+            self._emit(self._spaces)
+            self.col += len(self._spaces)
+        self._spaces = ""
+        self._emit(self._word)
+        self.col += len(self._word)
+        self._word = ""
+
+    def _emit(self, s: str) -> None:
+        self.out.write(s)
+
+
 def read_prompt() -> str:
     """Read a line at the you> prompt.
 
@@ -569,20 +629,24 @@ def run() -> None:
         console.print()
         console.print("[bold green]milly>[/bold green] ", end="")
 
+        wrap = StreamWrapper(shutil.get_terminal_size().columns, col=len("milly> "))
         try:
             thinking = False
             for token in engine.chat(user_input):
                 if isinstance(token, tuple):  # ("thinking", text)
                     if not thinking:
-                        sys.stdout.write("\033[2m[thinking] ")
+                        sys.stdout.write("\033[2m")
+                        wrap.write("[thinking] ")
                         thinking = True
-                    sys.stdout.write(token[1])
-                    sys.stdout.flush()
+                    wrap.write(token[1])
                     continue
                 if thinking:
-                    sys.stdout.write("\033[0m\n")
+                    wrap.finish()
+                    sys.stdout.write("\033[0m")
+                    wrap.newline()
                     thinking = False
-                print(token, end="", flush=True)
+                wrap.write(token)
+            wrap.finish()
             if thinking:
                 sys.stdout.write("\033[0m")
             print()  # newline after stream

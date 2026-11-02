@@ -9,15 +9,18 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 REPLIES = [
-    ("injection",
-     "Prompt injection is when text tries to override an AI's instructions - "
-     "e.g. a document saying \"ignore your rules\". Milly's Guardian scans "
-     "every input and ingested doc for these patterns before the model sees them."),
-    ("ignore",
-     "I can't share or override my instructions, but I'm happy to help "
-     "with something else."),
+    ("coffee or tea",
+     "Depends on the mood! Coffee for a quick, bold kick in the morning; "
+     "tea when you want something gentler to sip through the afternoon."),
+    ("cold brew",
+     "Coarse-ground coffee steeped in cold water for 12-18 hours. It comes "
+     "out smooth, low in acidity, and naturally a little sweet. Try 1 part "
+     "coffee to 8 parts water, then dilute to taste."),
+    ("green tea",
+     "Use water around 75-80 C, not boiling, and steep for 2-3 minutes. "
+     "Hotter water or longer steeping pulls out the bitter tannins."),
 ]
-DEFAULT = "Hi! I'm Milly, running locally on this machine. Ask me anything."
+DEFAULT = "Hey! I'm Milly, running locally on this machine. What's on your mind?"
 
 
 class H(BaseHTTPRequestHandler):

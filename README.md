@@ -3,7 +3,7 @@
 > **Local LLM with a built-in security layer.**  
 > Auditable. Offline. Yours.
 
-![Milly running in a terminal: a chat, a flagged prompt-injection attempt, and /models](assets/demo.gif)
+![Milly running in a terminal: a short chat about coffee and tea](assets/demo.gif)
 
 ---
 
@@ -114,8 +114,8 @@ Ctrl+C stops a reply mid-stream without quitting.
 
 ![Milly session in a terminal](assets/screenshot.png)
 
-Guardian flags the injection attempt (`instruction_override`), logs it, and
-warns you under the reply. `/models` lists what's installed in Ollama.
+A plain conversation with a local model. Replies stream in and word-wrap to
+your terminal width.
 
 The demo is a real Milly session recorded in a pseudo-terminal. Only the model
 is stubbed out, so it can be regenerated anywhere without Ollama:
