@@ -3,6 +3,8 @@
 > **Local LLM with a built-in security layer.**  
 > Auditable. Offline. Yours.
 
+![Milly running in a terminal: a short chat about coffee and tea](assets/demo.gif)
+
 ---
 
 ## What It Does
@@ -105,6 +107,23 @@ python main.py --session work                        # resume (or create) a name
 
 Inside Milly, arrow keys edit the line and up/down recall earlier prompts.
 Ctrl+C stops a reply mid-stream without quitting.
+
+---
+
+### What it looks like
+
+![Milly session in a terminal](assets/screenshot.png)
+
+A plain conversation with a local model. Replies stream in and word-wrap to
+your terminal width.
+
+The demo is a real Milly session recorded in a pseudo-terminal. Only the model
+is stubbed out, so it can be regenerated anywhere without Ollama:
+
+```bash
+pip install pexpect pyte pillow
+python scripts/demo/make_demo.py      # writes assets/demo.gif + assets/screenshot.png
+```
 
 ---
 
