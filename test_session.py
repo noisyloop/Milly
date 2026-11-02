@@ -105,14 +105,18 @@ class TestSessionRoundTrip(SessionTestCase):
         with self.assertRaises(FileNotFoundError):
             self.engine.load_session("never-created")
 
-    def test_new_session_signed_envelope_verifies(self):
-        # A freshly created empty session must pass HMAC verification on load.
+    def test_new_session_loads_empty(self):
         self.engine.new_session("fresh")
         try:
             loaded = self.engine.memory.load("fresh")
         except MemoryIntegrityError as e:  # pragma: no cover - failure path
-            self.fail(f"new session failed integrity check: {e}")
+            self.fail(f"new session failed to load: {e}")
         self.assertEqual(loaded, [])
+
+    def test_unpersisted_session_not_listed(self):
+        # The automatic startup session shouldn't litter memory/ with empties.
+        sid = self.engine.new_session(persist=False)
+        self.assertNotIn(sid, self.engine.memory.list_sessions())
 
 
 if __name__ == "__main__":

@@ -6,9 +6,50 @@
 # ============================================================================
 
 # --- Core ---
-default_model: llama3.2                # Ollama model used for inference (see `ollama list`)
-temperature: 0.7                       # Sampling temperature; 0.0 = deterministic, 1.0 = creative
-ollama_host: http://localhost:11434    # Ollama API endpoint (local by default — no egress)
+provider: ollama                       # Which entry under `providers:` to use at startup
+default_model: llama3.2                # Model name for that provider (`/models` lists them)
+temperature: 0.7                       # Sampling temperature; ignored by providers that don't support it
+show_thinking: false                   # Show reasoning from thinking models (qwen3, deepseek-r1,
+                                       # gpt-oss, ...). Toggle live with /think. Never saved to history.
+
+# --- Model providers ---
+# Switch live with `/provider NAME` or `/model PROVIDER:MODEL`, or at launch with
+#   python main.py --model anthropic:claude-opus-5-5
+#
+# Only `ollama` keeps everything on this machine. Cloud providers send your
+# prompts (and any retrieved doc snippets) to that service. Guardian still
+# checks both input and output either way.
+#
+# API keys are read from environment variables — never put keys in this file.
+providers:
+  ollama:
+    type: ollama
+    host: http://localhost:11434       # Ollama API endpoint (local — no egress)
+    # num_ctx: 8192                    # Optional: larger context window for long chats/RAG
+
+  openai:                              # Any OpenAI-compatible API (pip install openai)
+    type: openai
+    api_key_env: OPENAI_API_KEY
+    # base_url: https://openrouter.ai/api/v1   # e.g. OpenRouter, Groq, Together...
+    # default_model: gpt-5
+
+  anthropic:                           # Claude models (pip install anthropic)
+    type: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+    default_model: claude-opus-5-5
+    max_tokens: 64000
+    # effort: medium                   # low | medium | high | xhigh | max (newer Claude models)
+
+  # Local OpenAI-compatible servers — mark `local: true` so Milly doesn't
+  # show the cloud warning. Uncomment the ones you run:
+  # lmstudio:
+  #   type: openai
+  #   base_url: http://localhost:1234/v1
+  #   local: true
+  # llamacpp:
+  #   type: openai
+  #   base_url: http://localhost:8080/v1
+  #   local: true
 
 # --- Guardian (security layer) ---
 guardian_enabled: true                 # Master switch for input/output security checks

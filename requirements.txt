@@ -1,4 +1,8 @@
-ollama>=0.2.0
+ollama>=0.4.0
 PyYAML>=6.0
 rich>=13.7.0
 pypdf>=6.7.3
+
+# Optional — only needed for the providers you actually use:
+#   openai>=1.40      OpenAI, LM Studio, llama.cpp, vLLM, OpenRouter, Groq...
+#   anthropic         Claude models (keep it current: pip install -U anthropic)
