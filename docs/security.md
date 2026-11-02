@@ -9,7 +9,7 @@
 Extended Berkeley Packet Filter. Allows sandboxed programs to run in the Linux kernel without changing kernel source or loading modules. Used for observability, networking, and security tooling.
 
 ## HMAC
-Hash-based Message Authentication Code. Used to verify both data integrity and authenticity. Milly uses HMAC to sign every memory entry so tampering is detectable.
+Hash-based Message Authentication Code. Used to verify both data integrity and authenticity.
 
 ## Prompt Injection
 An attack where malicious input tricks an LLM into deviating from its intended behavior or revealing sensitive information. Common approaches include attempts to override the model's directives, assume a different persona, or claim false authority. Milly's Guardian layer detects and flags these patterns.

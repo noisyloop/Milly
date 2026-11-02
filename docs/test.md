@@ -7,8 +7,8 @@ Live at prishm.com.
 
 ## Milly
 Security-hardened local LLM built on Ollama.
-Features: HMAC-signed memory, TF-IDF RAG, Guardian injection detection, audit logging.
-Air-gapped by design — no network egress.
+Features: multi-provider models (Ollama, OpenAI-compatible, Anthropic), TF-IDF RAG, Guardian injection detection, audit logging.
+Local-first — no network egress with the default Ollama provider.
 
 ## Glasswally
 eBPF-based LLM distillation attack detection.

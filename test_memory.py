@@ -36,27 +36,6 @@ class MemoryTestCase(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Key management
-# ---------------------------------------------------------------------------
-
-class TestKeyManagement(MemoryTestCase):
-    def test_key_created_on_init(self):
-        key_path = self.dir / ".key"
-        self.assertTrue(key_path.exists())
-        self.assertEqual(len(key_path.read_bytes()), 32)
-
-    def test_key_file_permissions_restricted(self):
-        mode = (self.dir / ".key").stat().st_mode & 0o777
-        self.assertEqual(mode, 0o600)
-
-    def test_key_reused_across_instances(self):
-        first = (self.dir / ".key").read_bytes()
-        Memory(memory_dir=str(self.dir))  # second instance, same dir
-        second = (self.dir / ".key").read_bytes()
-        self.assertEqual(first, second)
-
-
-# ---------------------------------------------------------------------------
 # Save / load round-trip
 # ---------------------------------------------------------------------------
 
@@ -82,7 +61,7 @@ class TestSaveLoad(MemoryTestCase):
 
 
 # ---------------------------------------------------------------------------
-# Integrity / tamper detection
+# File format and validation
 # ---------------------------------------------------------------------------
 
 class TestIntegrity(MemoryTestCase):
@@ -91,30 +70,34 @@ class TestIntegrity(MemoryTestCase):
             json.dumps(obj), encoding="utf-8"
         )
 
-    def test_tampered_data_rejected(self):
+    def test_file_is_plain_json(self):
         self.mem.save("sess1", SAMPLE_HISTORY)
-        path = self.dir / "sess1.json"
-        stored = json.loads(path.read_text())
-        # Flip the stored history without updating the signature.
-        stored["data"] = json.dumps([{"role": "user", "content": "evil"}])
-        path.write_text(json.dumps(stored), encoding="utf-8")
-        with self.assertRaises(MemoryIntegrityError):
-            self.mem.load("sess1")
+        stored = json.loads((self.dir / "sess1.json").read_text())
+        self.assertEqual(stored["history"], SAMPLE_HISTORY)
+        self.assertNotIn("sig", stored)
 
-    def test_wrong_key_rejected(self):
+    def test_no_key_file_created(self):
+        self.assertFalse((self.dir / ".key").exists())
+
+    def test_legacy_signed_envelope_still_loads(self):
+        # Sessions saved by the old HMAC version must keep working.
+        self._write_raw("old", {"data": json.dumps(SAMPLE_HISTORY), "sig": "ab" * 32})
+        self.assertEqual(self.mem.load("old"), SAMPLE_HISTORY)
+        self.assertIn("old", self.mem.list_sessions())
+
+    def test_corrupt_json_rejected(self):
+        (self.dir / "bad.json").write_text("{not json", encoding="utf-8")
+        with self.assertRaises(MemoryIntegrityError):
+            self.mem.load("bad")
+
+    def test_malformed_history_rejected(self):
+        self._write_raw("weird", {"history": [{"role": "user"}]})
+        with self.assertRaises(MemoryIntegrityError):
+            self.mem.load("weird")
+
+    def test_no_temp_file_left_behind(self):
         self.mem.save("sess1", SAMPLE_HISTORY)
-        # A different Memory instance with a different key cannot verify.
-        other_dir = tempfile.TemporaryDirectory()
-        try:
-            other = Memory(memory_dir=other_dir.name)
-            # Copy the signed file into the other dir, keeping its (foreign) sig.
-            (Path(other_dir.name) / "sess1.json").write_text(
-                (self.dir / "sess1.json").read_text(), encoding="utf-8"
-            )
-            with self.assertRaises(MemoryIntegrityError):
-                other.load("sess1")
-        finally:
-            other_dir.cleanup()
+        self.assertEqual([p.name for p in self.dir.iterdir()], ["sess1.json"])
 
     def test_non_dict_envelope_rejected(self):
         # Regression: a bare list (e.g. the RAG index file) must not crash
@@ -123,10 +106,10 @@ class TestIntegrity(MemoryTestCase):
         with self.assertRaises(MemoryIntegrityError):
             self.mem.load("rag_index")
 
-    def test_missing_sig_rejected(self):
-        self._write_raw("nosig", {"data": "[]"})
+    def test_unknown_dict_rejected(self):
+        self._write_raw("other", {"data": "[]"})
         with self.assertRaises(MemoryIntegrityError):
-            self.mem.load("nosig")
+            self.mem.load("other")
 
 
 # ---------------------------------------------------------------------------

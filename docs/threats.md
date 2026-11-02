@@ -50,11 +50,10 @@ An attacker with access to the local machine modifies stored conversation memory
 - Model behavior shifts based on injected false memories
 
 ### Mitigations
-- HMAC signing on all memory entries (Milly does this)
-- Signature verification on every memory load
-- Reject any memory entry with an invalid signature
-- Alert on tamper detection
-- Store HMAC key with restricted file permissions (0600)
+- Store memory files with restricted permissions (0600) — Milly does this
+- Validate memory structure on load and refuse malformed files — Milly does this
+- Treat memory as user-trusted data, not as instructions
+- For shared or multi-user hosts, add integrity signing (e.g. HMAC) on top
 
 ---
 
@@ -131,12 +130,12 @@ The machine running the local LLM is compromised, giving the attacker access to 
 
 ### How It Works
 - Standard endpoint compromise (malware, phishing, exploit)
-- Once on the host, attacker has access to the HMAC signing key, all conversation memory, all RAG documents, the model weights, and the audit log
+- Once on the host, attacker has access to all conversation memory, all RAG documents, the model weights, and the audit log
 
 ### Mitigations
 - Standard endpoint security (patching, AV, EDR)
 - Full disk encryption
-- HMAC key stored with minimal permissions
+- Memory and log files stored with minimal permissions
 - Air-gapped deployment for highest sensitivity
 - Separate machine for sensitive research vs daily use
 - Monitor for unauthorized process access to Milly directories
@@ -187,7 +186,7 @@ Third-party plugins, extensions, or integrations that connect to the LLM introdu
 |--------|-----------|--------|-----------------|
 | Prompt injection | High | Medium | Guardian input sanitizer |
 | RAG document poisoning | Medium | High | Input sanitization on retrieval |
-| Memory poisoning | Low | High | HMAC signing |
+| Memory poisoning | Low | High | 0600 file permissions, load-time validation |
 | History tampering | Low | Medium | Cryptographic audit trail |
 | Model supply chain | Low | Critical | Hash verification |
 | Output distillation | Medium | Medium | Partial (pattern detection only) |

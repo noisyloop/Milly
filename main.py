@@ -13,10 +13,18 @@ Commands:
   /session new       Start a new named session
   /session list      List saved sessions
   /session load NAME Load a previous session
-  /model NAME        Switch model live
+  /session delete NAME Delete a saved session
+  /model [PROVIDER:]NAME  Switch model live
+  /models            List models available from the current provider
+  /provider [NAME]   Show or switch provider (ollama, openai, anthropic, ...)
+  /think             Toggle showing reasoning from thinking models
   /exit              Quit
+
+Usage:
+  python main.py [--model [PROVIDER:]NAME] [--provider NAME] [--session NAME]
 """
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -31,7 +39,13 @@ from audit import AuditLog
 from chat import ChatEngine, InputBlockedError
 from guardian import Guardian
 from memory import Memory, MemoryIntegrityError
+from providers import ProviderError, ProviderRegistry
 from rag import RAG
+
+try:  # arrow keys + up-arrow history at the you> prompt
+    import readline  # noqa: F401
+except ImportError:  # Windows without pyreadline
+    readline = None
 
 console = Console()
 
@@ -60,7 +74,12 @@ HELP_TEXT = """[bold]Milly commands[/bold]
   [cyan]/session new NAME[/cyan]   Start a new session with a specific name
   [cyan]/session list[/cyan]       List saved sessions
   [cyan]/session load NAME[/cyan]  Load a previous session
-  [cyan]/model NAME[/cyan]         Switch model (e.g. /model mistral)
+  [cyan]/session delete NAME[/cyan] Delete a saved session
+  [cyan]/model NAME[/cyan]         Switch model (e.g. /model qwen3:8b)
+  [cyan]/model PROVIDER:NAME[/cyan] Switch provider + model (e.g. /model anthropic:claude-opus-5-5)
+  [cyan]/models[/cyan]             List models from the current provider
+  [cyan]/provider [NAME][/cyan]    Show or switch provider
+  [cyan]/think[/cyan]              Toggle showing reasoning from thinking models
   [cyan]/exit[/cyan]               Quit
 
 [dim]Drop files into docs/ and run /ingest to enable RAG retrieval.[/dim]"""
@@ -99,7 +118,9 @@ def _load_system_prompt(cfg: dict) -> str:
 
 # Built-in defaults — used when config.yaml is missing or a key is omitted.
 DEFAULT_CONFIG: dict = {
+    "provider": "ollama",
     "default_model": "llama3.2",
+    "show_thinking": False,
     "temperature": 0.7,
     "max_input_length": 4000,
     "guardian_enabled": True,
@@ -151,6 +172,7 @@ def build_engine(cfg: dict) -> ChatEngine:
         memory_dir="memory",
         max_history=memory_cfg.get("max_history", 50),
     )
+    providers = ProviderRegistry(cfg)
     rag = RAG(
         config=rag_cfg,
         guardian=guardian,
@@ -171,6 +193,7 @@ def build_engine(cfg: dict) -> ChatEngine:
         memory=memory,
         audit=audit,
         rag=rag,
+        providers=providers,
     )
     return engine
 
@@ -188,6 +211,7 @@ def cmd_status(engine: ChatEngine) -> None:
     table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
     table.add_column("Key", style="cyan")
     table.add_column("Value")
+    table.add_row("Provider", f"{s['provider']} ({'local' if s['local'] else 'cloud — prompts leave this machine'})")
     table.add_row("Model", s["model"])
     table.add_row("Session", s["session_id"])
     table.add_row("History turns", str(s["history_turns"]))
@@ -296,6 +320,20 @@ def cmd_session(engine: ChatEngine, args: list[str]) -> None:
                 marker = " [bold green](current)[/bold green]" if s == engine.session_id else ""
                 console.print(f"  {s}{marker}")
 
+    elif sub in ("delete", "rm"):
+        if len(args) < 2:
+            console.print("[red]Usage: /session delete NAME[/red]")
+            return
+        name = args[1]
+        if name == engine.session_id:
+            console.print("[red]Can't delete the current session. Switch first.[/red]")
+            return
+        if name not in engine.memory.list_sessions():
+            console.print(f"[red]Session '{name}' not found.[/red]")
+            return
+        engine.memory.delete_session(name)
+        console.print(f"[green]Deleted session [bold]{name}[/bold].[/green]")
+
     elif sub == "load":
         if len(args) < 2:
             console.print("[red]Usage: /session load NAME[/red]")
@@ -316,13 +354,65 @@ def cmd_session(engine: ChatEngine, args: list[str]) -> None:
         console.print(f"[red]Unknown session subcommand: {sub}[/red]")
 
 
+def _locality_note(engine: ChatEngine) -> str:
+    return "" if engine.is_local else "  [yellow](cloud provider — prompts leave this machine)[/yellow]"
+
+
 def cmd_model(engine: ChatEngine, args: list[str]) -> None:
     if not args:
-        console.print(f"[cyan]Current model: {engine.model}[/cyan]")
+        console.print(f"[cyan]Current model: {engine.model_label}[/cyan]")
         return
-    name = args[0]
-    engine.switch_model(name)
-    console.print(f"[green]Model switched to: [bold]{name}[/bold][/green]")
+    try:
+        engine.switch_model(args[0])
+    except ProviderError as e:
+        console.print(f"[red]{e}[/red]")
+        return
+    console.print(
+        f"[green]Model switched to: [bold]{engine.model_label}[/bold][/green]"
+        + _locality_note(engine)
+    )
+
+
+def cmd_models(engine: ChatEngine) -> None:
+    try:
+        models = engine.list_models()
+    except ProviderError as e:
+        console.print(f"[red]{e}[/red]")
+        return
+    except Exception as e:
+        console.print(f"[red]Couldn't list models from {engine.provider_name}: {e}[/red]")
+        return
+    if not models:
+        console.print(f"[dim]No models reported by {engine.provider_name}.[/dim]")
+        return
+    console.print(f"[bold]Models on {engine.provider_name}:[/bold]")
+    for m in models:
+        marker = " [bold green](current)[/bold green]" if m == engine.model else ""
+        console.print(f"  {m}{marker}")
+
+
+def cmd_provider(engine: ChatEngine, args: list[str]) -> None:
+    if not args:
+        for name in engine.providers.names:
+            kind = "local" if engine.providers.is_local(name) else "cloud"
+            marker = " [bold green](current)[/bold green]" if name == engine.provider_name else ""
+            console.print(f"  {name} [dim]({kind})[/dim]{marker}")
+        console.print("[dim]Switch with /provider NAME [MODEL][/dim]")
+        return
+    try:
+        engine.switch_provider(args[0], args[1] if len(args) > 1 else None)
+    except ProviderError as e:
+        console.print(f"[red]{e}[/red]")
+        return
+    console.print(
+        f"[green]Now using [bold]{engine.model_label}[/bold][/green]" + _locality_note(engine)
+    )
+
+
+def cmd_think(engine: ChatEngine) -> None:
+    engine.show_thinking = not engine.show_thinking
+    state = "shown" if engine.show_thinking else "hidden"
+    console.print(f"[green]Model reasoning is now {state}.[/green]")
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +448,12 @@ def handle_command(line: str, engine: ChatEngine) -> bool:
         cmd_session(engine, args)
     elif cmd == "model":
         cmd_model(engine, args)
+    elif cmd == "models":
+        cmd_models(engine)
+    elif cmd == "provider":
+        cmd_provider(engine, args)
+    elif cmd == "think":
+        cmd_think(engine)
     else:
         console.print(f"[yellow]Unknown command: /{cmd}. Type /help for commands.[/yellow]")
 
@@ -372,16 +468,45 @@ def print_banner(engine: ChatEngine) -> None:
     console.print(
         Panel(
             f"[bold white]Milly[/bold white] — your local AI. Nobody else's.\n"
-            f"[dim]Model: {engine.model}  |  Session: {engine.session_id}  |  "
+            f"[dim]Model: {engine.model_label}  |  Session: {engine.session_id}  |  "
             f"Type [cyan]/help[/cyan] for commands.[/dim]",
             border_style="blue",
             padding=(0, 2),
         )
     )
+    if not engine.is_local:
+        console.print(
+            "[yellow]Using a cloud provider — your prompts and any retrieved "
+            "docs are sent to it. Guardian still checks input and output.[/yellow]"
+        )
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(prog="milly", description="Milly — local-first AI chat.")
+    p.add_argument("-m", "--model", help="model, or PROVIDER:MODEL (e.g. anthropic:claude-opus-5-5)")
+    p.add_argument("-p", "--provider", help="provider name from config.yaml (ollama, openai, anthropic, ...)")
+    p.add_argument("-s", "--session", help="load (or create) a named session")
+    p.add_argument("-c", "--config", default="config.yaml", help="path to config file")
+    return p.parse_args(argv)
+
+
+def read_prompt() -> str:
+    """Read a line at the you> prompt.
+
+    With readline available, the ANSI colour codes are wrapped in \\001/\\002
+    so readline knows the prompt's real width — otherwise editing long lines
+    or recalling history with the arrow keys garbles the display.
+    """
+    if readline is not None and sys.stdin.isatty():
+        return input("\n\001\033[1;34m\002you>\001\033[0m\002 ")
+    return console.input("\n[bold blue]you>[/bold blue] ")
 
 
 def run() -> None:
-    cfg = load_config()
+    args = parse_args()
+    cfg = load_config(args.config)
+    if args.provider:
+        cfg["provider"] = args.provider
 
     try:
         engine = build_engine(cfg)
@@ -389,7 +514,24 @@ def run() -> None:
         console.print(f"[red bold]Startup error:[/red bold] {e}")
         sys.exit(1)
 
-    engine.new_session()
+    try:
+        if args.provider:
+            engine.switch_provider(args.provider, None)
+        if args.model:
+            engine.switch_model(args.model)
+    except ProviderError as e:
+        console.print(f"[red bold]Startup error:[/red bold] {e}")
+        sys.exit(1)
+
+    if args.session and args.session in engine.memory.list_sessions():
+        try:
+            engine.load_session(args.session)
+        except MemoryIntegrityError as e:
+            console.print(f"[red bold]{e}[/red bold]")
+            sys.exit(1)
+    else:
+        # The automatic session isn't written to disk until the first reply.
+        engine.new_session(args.session, persist=bool(args.session))
     print_banner(engine)
 
     # Auto-ingest docs on startup if any real files exist (skip dotfiles like .gitkeep)
@@ -406,7 +548,7 @@ def run() -> None:
     # REPL
     while True:
         try:
-            user_input = console.input("\n[bold blue]you>[/bold blue] ").strip()
+            user_input = read_prompt().strip()
         except (KeyboardInterrupt, EOFError):
             console.print("\n[dim]Goodbye.[/dim]")
             break
@@ -427,22 +569,49 @@ def run() -> None:
         console.print("[bold green]milly>[/bold green] ", end="")
 
         try:
+            thinking = False
             for token in engine.chat(user_input):
+                if isinstance(token, tuple):  # ("thinking", text)
+                    if not thinking:
+                        sys.stdout.write("\033[2m[thinking] ")
+                        thinking = True
+                    sys.stdout.write(token[1])
+                    sys.stdout.flush()
+                    continue
+                if thinking:
+                    sys.stdout.write("\033[0m\n")
+                    thinking = False
                 print(token, end="", flush=True)
+            if thinking:
+                sys.stdout.write("\033[0m")
             print()  # newline after stream
+
+        except KeyboardInterrupt:
+            sys.stdout.write("\033[0m")
+            console.print("\n[dim](interrupted)[/dim]")
 
         except InputBlockedError as e:
             console.print(f"\n[red bold]Blocked:[/red bold] {e.reason}")
 
+        except ProviderError as e:
+            console.print(f"\n[red]{e}[/red]")
+
         except Exception as e:
             err = str(e).lower()
-            if any(k in err for k in ("connect", "refused", "connection")):
+            if engine.provider_name == "ollama" and any(
+                k in err for k in ("connect", "refused", "connection")
+            ):
                 console.print(
                     "\n[red]Cannot reach Ollama. Is it running?[/red]\n"
                     "[dim]  ollama serve[/dim]"
                 )
+            elif engine.provider_name == "ollama" and "not found" in err:
+                console.print(
+                    f"\n[red]Model '{engine.model}' isn't installed.[/red]\n"
+                    f"[dim]  ollama pull {engine.model}   (or /models to see what you have)[/dim]"
+                )
             else:
-                console.print(f"\n[red bold]Error:[/red bold] {e}")
+                console.print(f"\n[red bold]Error ({engine.provider_name}):[/red bold] {e}")
 
         # Surface flagged-but-not-blocked warning after response
         if (

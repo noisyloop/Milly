@@ -1,7 +1,10 @@
 """
 chat.py — Conversation engine for Milly.
 
-Wires together Guardian → RAG → Ollama → Memory → AuditLog.
+Wires together Guardian → RAG → model provider → Memory → AuditLog.
+
+The model backend is pluggable (see providers.py): Ollama by default, or any
+OpenAI-compatible endpoint, or Anthropic.
 
 Usage:
     engine = ChatEngine(config, guardian, memory, audit, rag)
@@ -20,11 +23,10 @@ After each call, engine.last_guard_result holds the GuardianResult
 import uuid
 from typing import Generator, Optional
 
-import ollama as _ollama
-
 from audit import AuditLog
 from guardian import Guardian, GuardianResult
 from memory import Memory
+from providers import ProviderRegistry
 from rag import RAG
 
 
@@ -44,6 +46,7 @@ class ChatEngine:
         memory: Memory,
         audit: AuditLog,
         rag: RAG,
+        providers: Optional[ProviderRegistry] = None,
     ):
         self.config = config
         self.guardian = guardian
@@ -55,9 +58,12 @@ class ChatEngine:
         self.temperature: float = float(config.get("temperature", 0.7))
         self.system_prompt: str = config.get("system_prompt", "You are Milly, a helpful local AI assistant.")
         self.rag_enabled: bool = config.get("rag", {}).get("enabled", True)
+        self.show_thinking: bool = bool(config.get("show_thinking", False))
 
-        host: str = config.get("ollama_host", "http://localhost:11434")
-        self._client = _ollama.Client(host=host)
+        self.providers = providers or ProviderRegistry(config)
+        self.provider_name: str = config.get("provider", "ollama")
+        if self.provider_name not in self.providers.configs:
+            self.provider_name = "ollama"
 
         self.session_id: str = self._new_session_id()
         self.history: list[dict] = []
@@ -71,39 +77,69 @@ class ChatEngine:
     def _new_session_id() -> str:
         return uuid.uuid4().hex[:6]
 
-    def new_session(self, name: Optional[str] = None) -> str:
+    def new_session(self, name: Optional[str] = None, persist: bool = True) -> str:
         self.session_id = name or self._new_session_id()
         self.history = []
-        # Persist the (empty) session immediately so it can be loaded right
-        # away with `/session load NAME`. Previously a session was only written
-        # to disk after the first successful chat turn, so `/session new test1`
-        # followed by `/session load test1` reported "not found".
-        self.memory.save(self.session_id, self.history)
-        self.audit.log(self.session_id, "session_start", model=self.model)
+        # Persist the (empty) session immediately so `/session new NAME` can be
+        # loaded right away. The automatic startup session passes
+        # persist=False so empty throwaway sessions don't pile up on disk —
+        # it gets saved after the first reply.
+        if persist:
+            self.memory.save(self.session_id, self.history)
+        self.audit.log(self.session_id, "session_start", model=self.model_label)
         return self.session_id
 
     def load_session(self, session_id: str) -> None:
         """Load an existing session. Raises MemoryIntegrityError on tamper."""
         self.history = self.memory.load(session_id)
         self.session_id = session_id
-        self.audit.log(self.session_id, "session_load", model=self.model)
+        self.audit.log(self.session_id, "session_load", model=self.model_label)
 
     def clear_history(self) -> None:
         self.history = self.memory.clear(self.session_id)
-        self.audit.log(self.session_id, "history_clear", model=self.model)
+        self.audit.log(self.session_id, "history_clear", model=self.model_label)
 
-    def switch_model(self, model_name: str) -> None:
-        old = self.model
-        self.model = model_name
+    @property
+    def model_label(self) -> str:
+        return f"{self.provider_name}:{self.model}"
+
+    @property
+    def is_local(self) -> bool:
+        return self.providers.is_local(self.provider_name)
+
+    def switch_model(self, spec: str) -> None:
+        """Switch model. Accepts "model" or "provider:model"."""
+        old = self.model_label
+        provider, model = self.providers.parse_spec(spec, self.provider_name)
+        if provider != self.provider_name:
+            self.providers.get(provider)  # fail fast on missing SDK / key
+        self.provider_name, self.model = provider, model
         self.audit.log(
-            self.session_id, "model_switch", model=model_name, previous=old
+            self.session_id, "model_switch", model=self.model_label, previous=old
         )
+
+    def switch_provider(self, name: str, model: Optional[str] = None) -> None:
+        old = self.model_label
+        self.providers.get(name)  # validates name, SDK, credentials
+        self.provider_name = name
+        if model:
+            self.model = model
+        else:
+            default = self.providers.configs[name].get("default_model")
+            if default:
+                self.model = default
+        self.audit.log(
+            self.session_id, "model_switch", model=self.model_label, previous=old
+        )
+
+    def list_models(self) -> list[str]:
+        return self.providers.get(self.provider_name).list_models()
 
     # ------------------------------------------------------------------
     # Core chat
     # ------------------------------------------------------------------
 
-    def chat(self, raw_input: str) -> Generator[str, None, None]:
+    def chat(self, raw_input: str) -> Generator:
         """
         Process raw_input through the security + inference pipeline.
 
@@ -119,7 +155,7 @@ class ChatEngine:
             self.audit.log(
                 self.session_id,
                 "input_blocked",
-                model=self.model,
+                model=self.model_label,
                 reason=guard.reason,
                 input_hash=guard.input_hash,
                 disposition="blocked",
@@ -130,7 +166,7 @@ class ChatEngine:
             self.audit.log(
                 self.session_id,
                 "injection_attempt",
-                model=self.model,
+                model=self.model_label,
                 pattern=guard.pattern,
                 input_hash=guard.input_hash,
                 disposition="flagged",
@@ -148,30 +184,29 @@ class ChatEngine:
         # --- Build message list ---
         messages = self._build_messages(user_input, rag_context)
 
-        # --- Stream from Ollama ---
+        # --- Stream from the model provider ---
+        # Reasoning ("thinking") from reasoning models is never stored in
+        # history; it is yielded as a ("thinking", text) tuple only when
+        # show_thinking is on. Answer tokens are yielded as plain strings.
         full_response = ""
         try:
-            stream = self._client.chat(
-                model=self.model,
-                messages=messages,
-                stream=True,
-                options={"temperature": self.temperature},
-            )
-            for chunk in stream:
-                # ollama SDK >= 0.2 returns ChatResponse objects
-                try:
-                    token: str = chunk.message.content or ""
-                except AttributeError:
-                    token = chunk.get("message", {}).get("content", "")  # type: ignore[union-attr]
-
-                if token:
-                    token = self.guardian.filter_output(token)
-                    full_response += token
-                    yield token
+            provider = self.providers.get(self.provider_name)
+            for kind, token in provider.stream_chat(
+                self.model, messages, self.temperature
+            ):
+                if not token:
+                    continue
+                token = self.guardian.filter_output(token)
+                if kind == "thinking":
+                    if self.show_thinking:
+                        yield ("thinking", token)
+                    continue
+                full_response += token
+                yield token
 
         except Exception as e:
             self.audit.log(
-                self.session_id, "inference_error", model=self.model, error=str(e)
+                self.session_id, "inference_error", model=self.model_label, error=str(e)
             )
             raise
 
@@ -186,7 +221,7 @@ class ChatEngine:
             self.memory.save(self.session_id, self.history)
 
         self.audit.log(
-            self.session_id, "chat_turn", model=self.model, disposition="ok"
+            self.session_id, "chat_turn", model=self.model_label, disposition="ok"
         )
 
     # ------------------------------------------------------------------
@@ -211,6 +246,8 @@ class ChatEngine:
     def status(self) -> dict:
         s = {
             "model": self.model,
+            "provider": self.provider_name,
+            "local": self.is_local,
             "session_id": self.session_id,
             "history_turns": len(self.history) // 2,
             "rag_docs": self.rag.doc_count,

@@ -7,14 +7,15 @@
 
 ## What It Does
 
-Milly is a security-hardened local LLM chatbot built on Ollama. The security layer is structural, not bolted on.
+Milly is a security-hardened terminal LLM chatbot. Local-first on Ollama, with optional support for other model providers. The security layer is structural, not bolted on.
 
-- **HMAC-signed conversation memory** — every memory entry is cryptographically signed; tampering is detectable
+- **Guardian layer** — prompt injection detection, input sanitization, output filtering — on every provider
+- **Any model** — local Ollama models (llama, qwen3, gemma3, deepseek-r1, gpt-oss...), any OpenAI-compatible server (LM Studio, llama.cpp, vLLM, OpenRouter, OpenAI), or Claude via the Anthropic API
+- **Thinking-model aware** — reasoning from thinking models is separated from the answer, hidden by default, never saved to history (`/think` to show it)
 - **TF-IDF RAG engine** — local retrieval-augmented generation with no external API calls
-- **Guardian layer** — prompt injection detection, input sanitization, output filtering
-- **Full audit trail** — every inference, every memory read/write, logged and attributable
-- **Offline by design** — no telemetry, no cloud fallback, no call-home behavior. For full air-gap, disable Ollama analytics with `OLLAMA_NO_ANALYTICS=1`
-- **186 passing tests** — security properties are verified, not assumed
+- **Plain-JSON conversation memory** — readable session files at mode `0600`, written atomically
+- **Full audit trail** — every inference, every session event, logged and attributable
+- **Offline by default** — Ollama is the default provider; no telemetry, no call-home behavior. Cloud providers are opt-in and Milly warns you whenever one is active
 
 ---
 
@@ -33,16 +34,17 @@ Milly is a security-hardened local LLM chatbot built on Ollama. The security lay
        ┌────────────┴────────────┐
        │                         │
 ┌──────▼──────┐         ┌────────▼────────┐
-│  TF-IDF RAG │         │   HMAC Memory   │
-│   Retrieval │         │     Store       │
-│   (local)   │         │  (signed blobs) │
+│  TF-IDF RAG │         │  Session Memory │
+│   Retrieval │         │   (JSON, 0600)  │
+│   (local)   │         │                 │
 └──────┬──────┘         └────────┬────────┘
        │                         │
        └────────────┬────────────┘
                     │
 ┌───────────────────▼──────────────────────────┐
-│              Ollama Inference                │
-│           (local model, no egress)           │
+│         Model Provider (pluggable)           │
+│  Ollama (default, local) · OpenAI-compatible │
+│               · Anthropic                    │
 └───────────────────┬──────────────────────────┘
                     │
 ┌───────────────────▼──────────────────────────┐
@@ -57,11 +59,11 @@ Milly is a security-hardened local LLM chatbot built on Ollama. The security lay
 
 | Threat | Mitigation |
 |--------|-----------|
-| Memory poisoning | HMAC signing on all stored memory entries |
-| Prompt injection via RAG | Input sanitization before retrieval |
-| Data exfiltration | Zero network egress by architecture |
-| History tampering | Cryptographic audit trail |
-| Model substitution | Local model hash verification |
+| Prompt injection | Guardian pattern detection on every input, all providers |
+| Prompt injection via RAG | Documents scanned at ingest; retrieved text wrapped as untrusted |
+| Data exfiltration | Local Ollama by default; cloud providers are opt-in and flagged in the UI |
+| Unsafe output | Guardian output filtering on every streamed token |
+| Snooping on history | Session files and logs created at mode `0600` |
 
 ---
 
@@ -92,7 +94,17 @@ export OLLAMA_NO_ANALYTICS=1
 python main.py
 ```
 
-Your HMAC key is generated automatically on first launch and stays local in `memory/.key` at mode `0600`.
+**Launch options**
+
+```bash
+python main.py --model qwen3:8b                      # pick a model
+python main.py --model anthropic:claude-opus-5-5     # pick provider + model
+python main.py --provider openai --model gpt-5       # same, separately
+python main.py --session work                        # resume (or create) a named session
+```
+
+Inside Milly, arrow keys edit the line and up/down recall earlier prompts.
+Ctrl+C stops a reply mid-stream without quitting.
 
 ---
 
@@ -112,14 +124,54 @@ Milly reads `config.yaml` from the project root on startup. Every option has a
 built-in default, so Milly runs even if the file is missing or incomplete.
 
 ```yaml
-default_model: llama3.2                # Ollama model used for inference
+provider: ollama                       # which provider to start with
+default_model: llama3.2                # model for that provider
 temperature: 0.7                       # 0.0 = deterministic, 1.0 = creative
-ollama_host: http://localhost:11434    # Ollama API endpoint
+show_thinking: false                   # show reasoning from thinking models
 guardian_enabled: true                 # Master switch for security checks
 guardian_sensitivity: medium           # low | medium | high
 max_input_length: 4000                 # Reject inputs longer than this
 audit_logging: true                    # Write events to logs/security.log
 ```
+
+### Model providers
+
+Providers are defined under `providers:` in `config.yaml`. Three are built in:
+
+| Provider | Type | Needs | Local? |
+|----------|------|-------|--------|
+| `ollama` | Ollama | Ollama running | Yes |
+| `openai` | OpenAI-compatible | `pip install openai`, `OPENAI_API_KEY` | No |
+| `anthropic` | Anthropic | `pip install anthropic`, `ANTHROPIC_API_KEY` | No |
+
+Add your own named entries for other OpenAI-compatible servers. Mark
+local servers `local: true` so Milly doesn't show the cloud warning:
+
+```yaml
+providers:
+  lmstudio:
+    type: openai
+    base_url: http://localhost:1234/v1
+    local: true
+  openrouter:
+    type: openai
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+```
+
+Then switch with `/provider lmstudio` or `/model lmstudio:qwen3-8b`. API keys
+are read from environment variables, so they never end up in the config file.
+The optional SDKs are only needed for the providers you actually use.
+
+**Thinking models.** Reasoning arrives either in a separate field (newer
+Ollama, OpenAI-compatible `reasoning_content`) or inline as `<think>…</think>`
+tags. Milly handles both: reasoning is hidden by default, shown dimmed with
+`/think`, and never written to session history.
+
+**Claude models.** Temperature isn't sent (current Claude models don't accept
+it). `effort` and `max_tokens` can be set under `providers.anthropic`. On
+models that support it, Milly turns on the API's server-side refusal fallback,
+so a declined request is retried on a fallback model automatically.
 
 ### Guardian sensitivity
 
@@ -166,7 +218,7 @@ Included reference docs:
 | `opsec.md` | Operational security principles |
 | `security.md` | Security concepts reference |
 
-Add your own docs to extend the knowledge base. The `docs/` folder is in `.gitignore` — your personal knowledge stays local.
+Add your own docs to extend the knowledge base. Files you add to `docs/` stay on your machine unless you commit them. With a cloud provider active, the snippets retrieved for each question are sent along with your prompt.
 
 ---
 
@@ -184,7 +236,12 @@ Add your own docs to extend the knowledge base. The `docs/` folder is in `.gitig
 | `/session new NAME` | Start a new named session |
 | `/session list` | List saved sessions |
 | `/session load NAME` | Load a previous session |
-| `/model NAME` | Switch model at runtime |
+| `/session delete NAME` | Delete a saved session |
+| `/model NAME` | Switch model on the current provider (e.g. `/model qwen3:8b`) |
+| `/model PROVIDER:NAME` | Switch provider and model (e.g. `/model anthropic:claude-opus-5-5`) |
+| `/models` | List models available from the current provider |
+| `/provider [NAME]` | List providers, or switch to one |
+| `/think` | Show/hide reasoning from thinking models |
 | `/exit` | Quit |
 
 ---
@@ -195,16 +252,20 @@ Add your own docs to extend the knowledge base. The `docs/` folder is in `.gitig
 |-------|------|-------|
 | llama3.2 | ~2GB | Default |
 | gemma3:1b | ~800MB | Lightweight, fast |
-| dolphin3 | ~2GB | Less filtered |
+| qwen3:8b | ~5GB | Thinking model — reasoning hidden unless `/think` |
+| deepseek-r1:8b | ~5GB | Thinking model (`<think>` tags handled) |
+| gpt-oss:20b | ~14GB | Thinking model |
 | mistral | ~4GB | Strong general purpose |
 
-Any local model available via `ollama pull` should work. Cloud models (`:cloud` tag) are not supported — they break the offline guarantee.
+Any local model available via `ollama pull` should work — run `/models` to see
+what's installed. Ollama `:cloud` models run on Ollama's servers, not yours, so
+they break the offline guarantee.
 
 ---
 
 ## Offline Use
 
-Once Ollama and your model are downloaded, Milly runs fully offline. No internet connection required. Verified working with wifi disabled.
+Once Ollama and your model are downloaded, Milly runs fully offline with the default `ollama` provider (or any `local: true` provider). No internet connection required. The `openai` and `anthropic` providers need network access and send your prompts to that service — Milly shows a warning in the banner, `/status`, and on every switch to one.
 
 ---
 
@@ -218,21 +279,16 @@ export OLLAMA_NO_ANALYTICS=1
 
 Add to your shell profile (`~/.zshrc` or `~/.bashrc`) to make it permanent.
 
-**Disable Milly's audit logging:**
+**Clear saved conversations:**
 
-Audit logs are stored locally in the `memory/` directory. To clear them:
+Sessions are plain JSON files in `memory/`. Delete one with `/session delete NAME`, or all of them:
 
 ```bash
 rm memory/*.json
 ```
 
-To clear your HMAC key and start fresh:
-
-```bash
-rm memory/.key
-```
-
-A new key is generated automatically on next launch.
+Sessions saved by older versions (HMAC-signed) still load. If you have an old
+`memory/.key` file, it's no longer used and can be deleted.
 
 **Clear all local data:**
 
@@ -246,7 +302,7 @@ rm -rf memory/
 rm logs/security.log
 ```
 
-Nothing is sent anywhere. Everything Milly stores is in `memory/`, `logs/`, and `docs/` on your machine. Delete them and it's gone.
+With a local provider nothing is sent anywhere. Everything Milly stores is in `memory/`, `logs/`, and `docs/` on your machine. Delete them and it's gone.
 
 ---
 
